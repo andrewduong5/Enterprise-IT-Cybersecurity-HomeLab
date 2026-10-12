@@ -1,0 +1,6 @@
+﻿StaticIP      : 192.168.4.200
+DHCP_Service  : Running
+DNS_Service   : Running
+ScopeState    : Active
+ReverseZone   : 4.168.192.in-addr.arpa
+DnsForwarders : 1.1.1.1, 8.8.8.8
