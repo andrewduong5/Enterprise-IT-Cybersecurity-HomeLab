@@ -1,0 +1,77 @@
+================================================================================
+PHASE 4: WINDOWS 11 CLIENT PROVISIONING & DOMAIN JOIN VALIDATION AUDIT
+Executed: October 2026
+Domain: corp.homelab.local | Client: DESKTOP-PSU6RTD | DC: WIN-8JMVMMCVFJU
+================================================================================
+
+[1] CLIENT IP CONFIGURATION (DHCP LEASE VERIFICATION)
+--------------------------------------------------------------------------------
+Host Name . . . . . . . . . . . . : DESKTOP-PSU6RTD
+Primary Dns Suffix  . . . . . . . : corp.homelab.local
+Node Type . . . . . . . . . . . . : Hybrid
+IP Routing Enabled. . . . . . . . : No
+WINS Proxy Enabled. . . . . . . . : No
+DNS Suffix Search List. . . . . . : corp.homelab.local
+
+Ethernet adapter Ethernet:
+   Connection-specific DNS Suffix  . : corp.homelab.local
+   Description . . . . . . . . . . . : Intel(R) PRO/1000 MT Desktop Adapter
+   Physical Address. . . . . . . . . : 08-00-27-40-90-10
+   DHCP Enabled. . . . . . . . . . . : Yes
+   Autoconfiguration Enabled . . . . : Yes
+   IPv4 Address. . . . . . . . . . . : 192.168.4.52(Preferred)
+   Subnet Mask . . . . . . . . . . . : 255.255.255.0
+   Lease Obtained. . . . . . . . . . : October 20, 2026 10:40:00 AM
+   Default Gateway . . . . . . . . . : 192.168.4.1
+   DHCP Server . . . . . . . . . . . : 192.168.4.200
+   DNS Servers . . . . . . . . . . . : 192.168.4.200
+
+[2] PRE-JOIN CONNECTIVITY & RESOLUTION AUDIT
+--------------------------------------------------------------------------------
+Command: Resolve-DnsName -Name corp.homelab.local
+Name                               Type   TTL   Section    IPAddress
+----                               ----   ---   -------    ---------
+corp.homelab.local                 A      600   Answer     192.168.4.200
+
+Command: Test-NetConnection -ComputerName corp.homelab.local -Port 445
+ComputerName     : corp.homelab.local
+RemoteAddress    : 192.168.4.200
+RemotePort       : 445
+InterfaceAlias   : Ethernet
+SourceAddress    : 192.168.4.52
+TcpTestSucceeded : True
+
+[3] DOMAIN MEMBERSHIP VERIFICATION (POST-JOIN)
+--------------------------------------------------------------------------------
+Command: Get-CimInstance -ClassName Win32_ComputerSystem | Select-Object Name, Domain, PartOfDomain, PrimaryOwnerName
+
+Name            Domain             PartOfDomain PrimaryOwnerName
+----            ------             ------------ ----------------
+DESKTOP-PSU6RTD corp.homelab.local         True LabAdmin
+
+[4] DOMAIN LOGON & IDENTITY AUDIT
+--------------------------------------------------------------------------------
+Command: whoami
+corp\administrator
+
+Command: hostname
+DESKTOP-PSU6RTD
+
+[5] DOMAIN CONTROLLER ACTIVE DIRECTORY & DHCP VERIFICATION
+--------------------------------------------------------------------------------
+=== Active Directory Computer Objects ===
+Name             DNSHostName                       Enabled
+----             -----------                       -------
+WIN-8JMVMMCVFJU  WIN-8JMVMMCVFJU.corp.homelab.local   True
+DESKTOP-PSU6RTD  DESKTOP-PSU6RTD.corp.homelab.local   True
+
+=== Active DHCP Scope Leases ===
+IPAddress     HostName                           ClientId          AddressState
+---------     --------                           --------          ------------
+192.168.4.50                                     94-0b-2d-a2-b5-d3 Active
+192.168.4.51  BAD_ADDRESS                        33-04-a8-c0       Declined
+192.168.4.52  DESKTOP-PSU6RTD.corp.homelab.local 08-00-27-40-90-10 Active
+
+================================================================================
+AUDIT COMPLETE: All Phase 4 verification checks passed.
+================================================================================

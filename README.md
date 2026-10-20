@@ -25,7 +25,7 @@ Everything here reflects practical problem solving, clean documentation, and a f
 | **Phase 1** | **Identity & Access Management (AD DS)** | OU hierarchy, PowerShell bulk onboarding, GPO Account Lockout | **Completed** |
 | **Phase 2** | **File Storage & Layered Access Control** | SMB network shares, NTFS inheritance removal, RBAC validation | **Completed** |
 | **Phase 3** | **Core Network Services** | Static IP hardening, DNS Reverse Lookup Zone, Upstream Forwarders, AD-Authorized DHCP | **Completed** |
-| **Phase 4** | **Workstation Deployment & Domain Join** | Client DHCP lease validation, domain binding, cross-subnet authentication | Queued |
+| **Phase 4** | **Workstation Deployment & Domain Join** | Client DHCP lease validation, domain binding, cross-subnet authentication | **Completed** |
 | **Phase 5** | **Secure Remote Administration & Segmentation** | RDP hardening, SSH key-based access, virtual network routing | Queued |
 | **Phase 6** | **Containerized Infrastructure (Docker)** | Linux microservices, network bridge configurations, Portainer | Queued |
 
@@ -159,7 +159,59 @@ Demonstrates the active client scope and configured scope options (Router, DNS, 
 
 ---
 
+## Phase 4: Workstation Deployment & Domain Join
+
+### 1. Endpoint Provisioning & DHCP Service Consumption
+Provisioned a clean Windows 11 Enterprise virtual workstation (`DESKTOP-PSU6RTD`) onto the internal network segment. The endpoint requested network parameters via DHCP broadcast and successfully consumed the domain scope:
+- **Assigned IP:** `192.168.4.52/24`
+- **Assigned DNS Resolver:** `192.168.4.200`
+- **Connection-Specific DNS Suffix:** `corp.homelab.local`
+- **Conflict Resolution:** Diagnosed and resolved an initial Layer 2 IP conflict (`192.168.4.51 BAD_ADDRESS`), validating the DHCP service's collision detection and address re-lease logic.
+
+### 2. Pre-Flight Connectivity & Service Discovery
+Validated Layer 3/4 network transport and domain service availability prior to joining:
+- **Authoritative DNS Resolution:** Confirmed `Resolve-DnsName -Name corp.homelab.local` resolved directly to the Domain Controller (`192.168.4.200`).
+- **Port Reachability:** Executed `Test-NetConnection -Port 445` against `corp.homelab.local`, confirming open SMB transport for domain enrollment and RPC traffic.
+
+### 3. Active Directory Trust & Domain Enrollment
+- Executed domain enrollment via PowerShell (`Add-Computer -DomainName "corp.homelab.local"`).
+- Established cryptographic machine trust with the Domain Controller, provisioning a new Active Directory computer account object (`CN=DESKTOP-PSU6RTD,CN=Computers,DC=corp,DC=homelab,DC=local`).
+- Delegated administrative control by inheriting `CORP\Domain Admins` into the workstation's local `Administrators` security group.
+
+### 4. Centralized Authentication Validation
+Logged into the endpoint using domain administrator credentials (`CORP\Administrator`), verifying Kerberos/NTLM authentication offloading and local user profile initialization (`C:\Users\Administrator`).
+
+---
+
+## Phase 4 Verification & Proof of Work
+
+### Client DHCP Lease & Network Parameters
+Validates active DHCP lease on `Win11-Client` showing IP `192.168.4.52`, DNS server `192.168.4.200`, and domain suffix `corp.homelab.local`.
+
+![Client DHCP Lease](04-Client-Domain-Onboarding/screenshots/01-client-dhcp-lease.png)
+
+### Pre-Join DNS Resolution & SMB Transport Test
+Validates that `corp.homelab.local` resolves correctly and port 445 (SMB) is open and reachable from the client.
+
+![DNS and SMB Validation](04-Client-Domain-Onboarding/screenshots/02-dns-smb-verification.png)
+
+### Domain Membership CIM Query
+Confirms domain join status via `Get-CimInstance -ClassName Win32_ComputerSystem`, verifying `PartOfDomain : True`.
+
+![Domain Membership Verified](04-Client-Domain-Onboarding/screenshots/03-domain-membership-verified.png)
+
+### Domain User Authentication & Context
+Confirms successful interactive logon under domain admin credentials with `whoami` returning `corp\administrator` on `DESKTOP-PSU6RTD`.
+
+![Domain User Whoami](04-Client-Domain-Onboarding/screenshots/04-domain-login-whoami.png)
+
+### Server-Side Active Directory & DHCP Audit
+Displays the domain controller's registered computer account object and DHCP lease table showing `192.168.4.52` active and `192.168.4.51` declined.
+
+![Server AD and DHCP Audit](04-Client-Domain-Onboarding/screenshots/05-ad-dhcp-confirmation.png)
+
+---
+
 ## Next Steps
-- **Phase 4:** Workstation Deployment & Domain Join (Provision Windows 10/11 client VM, verify dynamic DHCP lease from DC, execute Active Directory domain join, and validate SMB share access across domain user profiles).
 - **Phase 5:** Secure Remote Administration & Segmentation (RDP hardening, SSH key-based access, virtual network routing).
 - **Phase 6:** Containerized Infrastructure (Docker, Portainer, Linux microservices).
