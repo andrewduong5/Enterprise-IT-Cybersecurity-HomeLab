@@ -13,6 +13,7 @@ I structured each milestone around real-world tickets and day-to-day enterprise 
 - **File Services & Access Control:** Deploying **SMB shares**, removing inheritance, and configuring granular **NTFS permissions** via **RBAC**.
 - **Security & Governance:** Hardening endpoints and mitigating brute-force attacks with domain **Group Policy Objects (GPOs)**.
 - **Core Networking & Troubleshooting:** Managing static IPs, diagnosing **DNS resolution**, and resolving connectivity issues.
+- **Remote Access Architecture & Hardening:** Evaluating cross-platform administrative protocols, understanding AD token boundaries, and enforcing enterprise RDP security.
 
 Everything here reflects practical problem solving, clean documentation, and a focus on security by design.
 
@@ -26,7 +27,7 @@ Everything here reflects practical problem solving, clean documentation, and a f
 | **Phase 2** | **File Storage & Layered Access Control** | SMB network shares, NTFS inheritance removal, RBAC validation | **Completed** |
 | **Phase 3** | **Core Network Services** | Static IP hardening, DNS Reverse Lookup Zone, Upstream Forwarders, AD-Authorized DHCP | **Completed** |
 | **Phase 4** | **Workstation Deployment & Domain Join** | Client DHCP lease validation, domain binding, cross-subnet authentication | **Completed** |
-| **Phase 5** | **Secure Remote Administration & Segmentation** | RDP hardening, SSH key-based access, virtual network routing | Queued |
+| **Phase 5** | **Secure Remote Administration & Hardening** | OpenSSH evaluation, architectural DC token analysis, GPO-enforced NLA/TLS, active RDP verification | **Completed** |
 | **Phase 6** | **Containerized Infrastructure (Docker)** | Linux microservices, network bridge configurations, Portainer | Queued |
 
 ---
@@ -212,6 +213,50 @@ Displays the domain controller's registered computer account object and DHCP lea
 
 ---
 
+## Phase 5: Remote Administration Architecture & Session Hardening
+
+### 1. OpenSSH Service Provisioning & Key Generation
+Deployed the `OpenSSH.Server` Windows capability on the Domain Controller (`WIN-8JMVMMCVFJU`), configured the daemon for automatic startup, and verified active socket binding on TCP port 22 across all local interfaces. From the management workstation (`Win11-Client`), generated an asymmetric ED25519 key pair (`id_ed25519` / `id_ed25519.pub`) to establish passwordless administrative access.
+
+### 2. Architectural Root Cause Analysis: OpenSSH on Domain Controllers
+During key deployment, public-key authentication for domain administrative accounts consistently reverted to password authentication. Technical investigation revealed a core architectural limitation:
+- **Absence of Local SAM:** Promoting a server to an Active Directory Domain Controller permanently disables the local Security Accounts Manager (`SAM`). All security principals reside exclusively within Active Directory (`NTDS.dit`).
+- **Interactive Token Generation Failure:** The Win32-OpenSSH daemon uses the local SAM to construct interactive logon tokens via `LsaLogonUser` with S4U (Service-for-User). Because a DC lacks a local SAM, LSA cannot issue an interactive Kerberos/NTLM administrative token for a domain account without a cached password or Kerberos PKINIT credentials.
+- **Remediation & Deprecation:** Deprecated the experimental OpenSSH setup and executed a cleanup script to remove non-standard firewall rules, temporary registry keys, and authentication packages, adhering to enterprise hardening guidelines.
+
+### 3. Remote Desktop Protocol (RDP) Hardening via Group Policy
+Interactive remote administration was hardened at the domain level via the **Default Domain Controllers Policy** (`gpmc.msc`):
+- **Network Level Authentication (NLA):** Enforced via `Require user authentication for remote connections by using Network Level Authentication`. This forces the client to authenticate credentials via CredSSP/Kerberos before the server initializes an interactive session, mitigating Denial of Service (DoS) and RDP-based exploits (e.g., BlueKeep).
+- **Mandatory Encryption Layer:** Enforced via `Require use of specific security layer for remote (RDP) connections` set strictly to **SSL (TLS)** to ensure all session transport is encrypted and mutual certificate validation is enforced.
+
+### 4. Service Activation & Verification
+Enforced the GPO via `gpupdate /force`, configured `fDenyTSConnections = 0`, opened the inbound firewall rules for Remote Desktop, and resolved a `STOP_PENDING` thread lock by cleanly recycling the terminal services host. Live remote connectivity was established from `Win11-Client` targeting `192.168.4.210`, successfully negotiating the TLS certificate and establishing an authenticated administrative session.
+
+---
+
+## Phase 5 Verification & Proof of Work
+
+### OpenSSH Server Listener Active
+Validates the OpenSSH service listening state on TCP port 22 across both IPv4 and IPv6 interfaces on the Domain Controller.
+
+![OpenSSH Service Listening](05-Remote-Access-and-Hardening/01-openssh-service-listening.png)
+
+### Client Cryptographic Key Pair Generation
+Demonstrates the generation of the client ED25519 administrative key pair (`id_ed25519`) inside the workstation profile.
+
+![Client SSH Keygen](05-Remote-Access-and-Hardening/02-client-ssh-keygen.png)
+
+### Group Policy NLA and TLS Security Enforcement
+Displays the GPO settings in Group Policy Management Editor showing both Network Level Authentication and TLS Security Layer set to `Enabled`.
+
+![GPO NLA and TLS Hardening](05-Remote-Access-and-Hardening/03-rdp-nla-gpo-enabled.png)
+
+### Active Hardened Remote Desktop Session
+Verifies an active RDP session (`rdp-tcp#0`) initiated from `Win11-Client` over TLS/NLA, displaying `corp\administrator` context on `WIN-8JMVMMCVFJU`.
+
+![Active RDP Session](05-Remote-Access-and-Hardening/04-rdp-session-active.png)
+
+---
+
 ## Next Steps
-- **Phase 5:** Secure Remote Administration & Segmentation (RDP hardening, SSH key-based access, virtual network routing).
 - **Phase 6:** Containerized Infrastructure (Docker, Portainer, Linux microservices).
