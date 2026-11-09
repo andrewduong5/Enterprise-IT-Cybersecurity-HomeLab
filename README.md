@@ -13,7 +13,7 @@ I structured each milestone around real-world tickets and day-to-day enterprise 
 - **File Services & Access Control:** Deploying **SMB shares**, removing inheritance, and configuring granular **NTFS permissions** via **RBAC**.
 - **Security & Governance:** Hardening endpoints and mitigating brute-force attacks with domain **Group Policy Objects (GPOs)**.
 - **Core Networking & Troubleshooting:** Managing static IPs, diagnosing **DNS resolution**, and resolving connectivity issues.
-- **Remote Access Architecture & Hardening:** Evaluating cross-platform administrative protocols, understanding AD token boundaries, and enforcing enterprise RDP security.
+- **Remote Access Architecture & Hardening:** Evaluating cross-platform administrative protocols, resolving NTFS ACL barriers on OpenSSH, and enforcing enterprise RDP security.
 
 Everything here reflects practical problem solving, clean documentation, and a focus on security by design.
 
@@ -27,7 +27,7 @@ Everything here reflects practical problem solving, clean documentation, and a f
 | **Phase 2** | **File Storage & Layered Access Control** | SMB network shares, NTFS inheritance removal, RBAC validation | **Completed** |
 | **Phase 3** | **Core Network Services** | Static IP hardening, DNS Reverse Lookup Zone, Upstream Forwarders, AD-Authorized DHCP | **Completed** |
 | **Phase 4** | **Workstation Deployment & Domain Join** | Client DHCP lease validation, domain binding, cross-subnet authentication | **Completed** |
-| **Phase 5** | **Secure Remote Administration & Hardening** | OpenSSH evaluation, architectural DC token analysis, GPO-enforced NLA/TLS, active RDP verification | **Completed** |
+| **Phase 5** | **Secure Remote Administration & Hardening** | OpenSSH service & ACL remediation, DC token analysis, GPO-enforced NLA/TLS, active RDP verification | **Completed** |
 | **Phase 6** | **Containerized Infrastructure (Docker)** | Linux microservices, network bridge configurations, Portainer | Queued |
 
 ---
@@ -80,10 +80,10 @@ Implemented a secure enterprise file server structure with strict separation bet
 - **Share Level:** Published `\\WinServer2022-DC\CompanyData` with broad network access (`Staff` group granted Change, `Domain Admins` granted Full Control).
 - **NTFS File Level:** Explicitly disabled inheritance on departmental directories to eliminate default broad access (`Users` group).
 - **Role-Based Access Control (RBAC):** Mapped department security groups directly to corresponding folder ACLs:
-  * `C:\CompanyData\Finance` $\rightarrow$ `corp\Dept-Finance` (Modify)
-  * `C:\CompanyData\HR` $\rightarrow$ `corp\Dept-HR` (Modify)
-  * `C:\CompanyData\IT` $\rightarrow$ `corp\Dept-IT` (Modify)
-  * `C:\CompanyData\General` $\rightarrow$ `corp\Staff` (Modify)
+  * `C:\CompanyData\Finance` -> `corp\Dept-Finance` (Modify)
+  * `C:\CompanyData\HR` -> `corp\Dept-HR` (Modify)
+  * `C:\CompanyData\IT` -> `corp\Dept-IT` (Modify)
+  * `C:\CompanyData\General` -> `corp\Staff` (Modify)
   * `corp\Domain Admins` and `SYSTEM` retain Full Control across all volumes.
 
 ### 2. Automation & Scripting
@@ -215,22 +215,34 @@ Displays the domain controller's registered computer account object and DHCP lea
 
 ## Phase 5: Remote Administration Architecture & Session Hardening
 
-### 1. OpenSSH Service Provisioning & Key Generation
-Deployed the `OpenSSH.Server` Windows capability on the Domain Controller (`WIN-8JMVMMCVFJU`), configured the daemon for automatic startup, and verified active socket binding on TCP port 22 across all local interfaces. From the management workstation (`Win11-Client`), generated an asymmetric ED25519 key pair (`id_ed25519` / `id_ed25519.pub`) to establish passwordless administrative access.
+### 1. OpenSSH Service Provisioning & Key Infrastructure
+Deployed the `OpenSSH.Server` Windows capability on the Domain Controller (`WIN-8JMVMMCVFJU`), configured the daemon for automatic startup, and verified active socket binding on TCP port 22 across all local interfaces. From the management workstation (`Win11-Client`), generated an asymmetric ED25519 key pair (`id_ed25519` / `id_ed25519.pub`) and provisioned the public key into the server's central administrative store (`C:\ProgramData\ssh\administrators_authorized_keys`).
 
-### 2. Architectural Root Cause Analysis: OpenSSH on Domain Controllers
-During key deployment, public-key authentication for domain administrative accounts consistently reverted to password authentication. Technical investigation revealed a core architectural limitation:
-- **Absence of Local SAM:** Promoting a server to an Active Directory Domain Controller permanently disables the local Security Accounts Manager (`SAM`). All security principals reside exclusively within Active Directory (`NTDS.dit`).
-- **Interactive Token Generation Failure:** The Win32-OpenSSH daemon uses the local SAM to construct interactive logon tokens via `LsaLogonUser` with S4U (Service-for-User). Because a DC lacks a local SAM, LSA cannot issue an interactive Kerberos/NTLM administrative token for a domain account without a cached password or Kerberos PKINIT credentials.
-- **Remediation & Deprecation:** Deprecated the experimental OpenSSH setup and executed a cleanup script to remove non-standard firewall rules, temporary registry keys, and authentication packages, adhering to enterprise hardening guidelines.
+### 2. Incident & Root Cause Analysis (RCA): OpenSSH on Active Directory Domain Controllers
+During initial connection attempts from `Win11-Client` (`192.168.4.53`), the SSH session failed to authenticate:
+- **Service State Misconfiguration:** The `sshd` Windows service on the Domain Controller was discovered in a `Disabled` and `Stopped` state.
+- **NTFS ACL Restrictions:** Inspecting the key store via `Get-Content` returned `PermissionDenied: UnauthorizedAccessException`. Windows OpenSSH mandates strict ACLs on administrative keys: if permissions inherit broad access or lack explicit rights for `BUILTIN\Administrators` and `NT AUTHORITY\SYSTEM`, the daemon blocks key parsing.
+- **Architectural DC Token Behavior:** Because Domain Controllers lack a local Security Accounts Manager (`SAM`), the Win32-OpenSSH daemon requires domain credential verification to issue an interactive Kerberos/NTLM administrative token for the session.
 
-### 3. Remote Desktop Protocol (RDP) Hardening via Group Policy
-Interactive remote administration was hardened at the domain level via the **Default Domain Controllers Policy** (`gpmc.msc`):
-- **Network Level Authentication (NLA):** Enforced via `Require user authentication for remote connections by using Network Level Authentication`. This forces the client to authenticate credentials via CredSSP/Kerberos before the server initializes an interactive session, mitigating Denial of Service (DoS) and RDP-based exploits (e.g., BlueKeep).
-- **Mandatory Encryption Layer:** Enforced via `Require use of specific security layer for remote (RDP) connections` set strictly to **SSL (TLS)** to ensure all session transport is encrypted and mutual certificate validation is enforced.
+### 3. OpenSSH Remediation & Access Restoration
+1. **Service Recovery:** Enabled and started the service with automatic persistence:
+   ```powershell
+   Set-Service -Name sshd -StartupType Automatic
+   Start-Service -Name sshd
+   ```
+2. **NTFS Permission Hardening:** Took ownership and assigned explicit access control entries (ACEs) via `takeown` and `icacls`:
+   ```powershell
+   takeown.exe /F "C:\ProgramData\ssh\administrators_authorized_keys" /A
+   icacls.exe "C:\ProgramData\ssh\administrators_authorized_keys" /inheritance:r
+   icacls.exe "C:\ProgramData\ssh\administrators_authorized_keys" /grant "NT AUTHORITY\SYSTEM:(F)"
+   icacls.exe "C:\ProgramData\ssh\administrators_authorized_keys" /grant "BUILTIN\Administrators:(F)"
+   ```
+3. **Firewall Rule Verification:** Confirmed inbound transport on TCP port 22 was enabled via `Enable-NetFirewallRule -Name "OpenSSH-Server-In-TCP"`.
 
-### 4. Service Activation & Verification
-Enforced the GPO via `gpupdate /force`, configured `fDenyTSConnections = 0`, opened the inbound firewall rules for Remote Desktop, and resolved a `STOP_PENDING` thread lock by cleanly recycling the terminal services host. Live remote connectivity was established from `Win11-Client` targeting `192.168.4.210`, successfully negotiating the TLS certificate and establishing an authenticated administrative session.
+### 4. Remote Desktop Protocol (RDP) Hardening via Group Policy
+To provide a redundant, enterprise-grade graphical management path alongside SSH, interactive administration was hardened at the domain level via the **Default Domain Controllers Policy** (`gpmc.msc`):
+- **Network Level Authentication (NLA):** Enforced via `Require user authentication for remote connections by using Network Level Authentication`. This forces the client to authenticate credentials via CredSSP/Kerberos before an interactive session initializes, mitigating Denial of Service (DoS) and RDP-based exploits (e.g., BlueKeep).
+- **Mandatory Encryption Layer:** Enforced via `Require use of specific security layer for remote (RDP) connections` set strictly to **SSL (TLS)** to ensure mutual certificate validation and end-to-end transport encryption.
 
 ---
 
@@ -245,6 +257,16 @@ Validates the OpenSSH service listening state on TCP port 22 across both IPv4 an
 Demonstrates the generation of the client ED25519 administrative key pair (`id_ed25519`) inside the workstation profile.
 
 ![Client SSH Keygen](05-Remote-Access-and-Hardening/02-client-ssh-keygen.png)
+
+### OpenSSH Inbound Handshake & Authentication
+Initiating an OpenSSH connection from `Win11-Client` (`192.168.4.53`) to `WinServer2022-DC` (`192.168.4.210`) over TCP port 22.
+
+![OpenSSH Handshake](05-Remote-Access-and-Hardening/05-openssh-handshake.png)
+
+### OpenSSH Remote Execution & Session Teardown
+Active interactive CLI session on `WIN-8JMVMMCVFJU` verifying domain administrative privileges (`whoami`), host IP (`192.168.4.210`), and a clean disconnection back to the client prompt.
+
+![OpenSSH Session Verification](05-Remote-Access-and-Hardening/06-openssh-session-verification.png)
 
 ### Group Policy NLA and TLS Security Enforcement
 Displays the GPO settings in Group Policy Management Editor showing both Network Level Authentication and TLS Security Layer set to `Enabled`.
